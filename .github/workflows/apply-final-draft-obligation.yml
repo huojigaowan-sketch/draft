@@ -1,0 +1,255 @@
+name: Apply Final Draft obligation integration
+
+on:
+  push:
+    branches:
+      - feature/final-draft-obligation-flow
+    paths:
+      - .github/workflows/apply-final-draft-obligation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-upgrade:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feature/final-draft-obligation-flow
+
+      - name: Integrate guided flow with Final Draft editor
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          root = Path('.')
+
+          # The public compiler maps echo strings through allCases.
+          models = root / 'StoryMentor/Models/GuidedScreenplayObligations.swift'
+          text = models.read_text()
+          text = text.replace(
+              'nonisolated enum GuidedScreenplayEchoKind: String, Codable, Hashable, Sendable {',
+              'nonisolated enum GuidedScreenplayEchoKind: String, CaseIterable, Codable, Hashable, Sendable {'
+          )
+          models.write_text(text)
+
+          # FountainParser.replacingScene returns a concrete String.
+          writer = root / 'StoryMentor/Services/GuidedFinalDraftProjectWriter.swift'
+          text = writer.read_text()
+          old = '''    guard let updatedScreenplay = FountainParser.replacingScene(
+      at: sceneIndex,
+      in: project.screenplayText,
+      with: result.fountainText
+    ) else {
+      throw GuidedFinalDraftProjectWriterError.sceneReplacementFailed
+    }
+
+    project.screenplayText = FountainParser.standardizingSceneFlow(
+      in: updatedScreenplay
+    )'''
+          new = '''    let updatedScreenplay = FountainParser.replacingScene(
+      at: sceneIndex,
+      in: project.screenplayText,
+      with: result.fountainText
+    )
+
+    project.screenplayText = FountainParser.standardizingSceneFlow(
+      in: updatedScreenplay
+    )'''
+          if old not in text:
+              raise SystemExit('writer replacement anchor not found')
+          writer.write_text(text.replace(old, new))
+
+          # The default compiler route now opens the same Final Draft editor used
+          # by professional screenplay work, wrapped by the quiet obligation bar.
+          workspace = root / 'StoryMentor/Views/Workspace/WorkspaceContentView.swift'
+          text = workspace.read_text()
+          if 'GuidedFlowWorkspaceView(' not in text:
+              raise SystemExit('guided workspace route anchor not found')
+          workspace.write_text(
+              text.replace('GuidedFlowWorkspaceView(', 'GuidedFinalDraftWorkspaceView(')
+          )
+
+          studio = root / 'StoryMentor/Views/Screenplay/ScreenplayStudioView.swift'
+          text = studio.read_text()
+
+          property_anchor = '''    @Bindable var project: StoryProject
+    let onNavigate: (WorkspaceSection) -> Void
+    @Query private var workspaceStates: [ScreenplayWorkspaceState]'''
+          property_replacement = '''    @Bindable var project: StoryProject
+    let onNavigate: (WorkspaceSection) -> Void
+    var guidedMode = false
+    @Query private var workspaceStates: [ScreenplayWorkspaceState]'''
+          if property_anchor not in text:
+              raise SystemExit('ScreenplayStudioView property anchor not found')
+          text = text.replace(property_anchor, property_replacement, 1)
+
+          body_anchor = '''        VStack(spacing: 10) {
+            aiCreationHeader
+            editorBody
+            statusBar
+        }'''
+          body_replacement = '''        VStack(spacing: 10) {
+            if !guidedMode {
+                aiCreationHeader
+            }
+            editorBody
+            statusBar
+        }'''
+          if body_anchor not in text:
+              raise SystemExit('ScreenplayStudioView body anchor not found')
+          text = text.replace(body_anchor, body_replacement, 1)
+
+          task_anchor = '''        .task {
+            let addedNSIRMappings = SceneMappingEngine.synchronizeNSIRTransitions('''
+          task_replacement = '''        .task {
+            if guidedMode {
+                showingNavigator = false
+                showingDramaticLens = false
+                canvasMode = .scene
+            }
+            let addedNSIRMappings = SceneMappingEngine.synchronizeNSIRTransitions('''
+          if task_anchor not in text:
+              raise SystemExit('ScreenplayStudioView task anchor not found')
+          text = text.replace(task_anchor, task_replacement, 1)
+
+          selection_anchor = '''            lastCommittedFullText = project.screenplayText
+            if let incomplete = firstIncompleteSmallBeatContract,
+               let record = synchronizedSceneRecords.first(where: {
+                   $0.sceneContractID == incomplete.id
+               }) {
+                loadScene(at: record.order)
+            } else if let activeSceneID = state.activeSceneID,'''
+          selection_replacement = '''            lastCommittedFullText = project.screenplayText
+            if let requestedContractID = project.requestedSceneContractID,
+               let record = synchronizedSceneRecords.first(where: {
+                   $0.sceneContractID == requestedContractID
+               }) {
+                project.requestedSceneContractID = nil
+                loadScene(at: record.order)
+            } else if let incomplete = firstIncompleteSmallBeatContract,
+                      let record = synchronizedSceneRecords.first(where: {
+                          $0.sceneContractID == incomplete.id
+                      }) {
+                loadScene(at: record.order)
+            } else if let activeSceneID = state.activeSceneID,'''
+          if selection_anchor not in text:
+              raise SystemExit('ScreenplayStudioView initial selection anchor not found')
+          text = text.replace(selection_anchor, selection_replacement, 1)
+
+          disappear_anchor = '''        .onDisappear {
+            sceneDraftSaveTask?.cancel()
+            commitSceneDraft()
+        }'''
+          disappear_replacement = '''        .onChange(of: project.requestedSceneContractID) { _, requestedID in
+            guard let requestedID else { return }
+            focusRequestedSceneContract(requestedID)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .guidedFlowCommitScreenplay
+            )
+        ) { notification in
+            guard let projectID = notification.object as? UUID,
+                  projectID == project.id else { return }
+            commitSceneDraft()
+        }
+        .onDisappear {
+            sceneDraftSaveTask?.cancel()
+            commitSceneDraft()
+        }'''
+          if disappear_anchor not in text:
+              raise SystemExit('ScreenplayStudioView disappear anchor not found')
+          text = text.replace(disappear_anchor, disappear_replacement, 1)
+
+          helper_anchor = '''    private func selectSceneContract(_ contract: SceneContract) {'''
+          helper_replacement = '''    private func focusRequestedSceneContract(_ contractID: UUID) {
+        guard let record = synchronizedSceneRecords.first(where: {
+            $0.sceneContractID == contractID
+        }) else { return }
+        project.requestedSceneContractID = nil
+        selectScene(record.order)
+    }
+
+    private func selectSceneContract(_ contract: SceneContract) {'''
+          if helper_anchor not in text:
+              raise SystemExit('ScreenplayStudioView helper anchor not found')
+          studio.write_text(text.replace(helper_anchor, helper_replacement, 1))
+
+          readme = root / 'README.md'
+          text = readme.read_text()
+          marker = '## Final Draft obligation flow'
+          if marker not in text:
+              text += '''
+
+## Final Draft obligation flow
+
+- A new project explicitly chooses a professional structure such as the three-act structure, Hero’s Journey, Save the Cat, Snowflake, or another built-in template.
+- That template becomes a hidden completion map: structure stages, scene slots, dramatic updates, formal screenplay text, four delivery reviews, and final author approval.
+- The visible writing surface is the existing TextKit/Fountain Final Draft workspace. The prompt bar supplies only the next necessary writing proposition; there is no parallel essay editor.
+- Long-form author writing is compiled one scene at a time into professional Fountain while preserving author sentences, dialogue, objects, and life detail. The AI never generates later scenes or the whole screenplay from one turn.
+- The system stops proposing new prompts after every hard obligation is satisfied and the author confirms the current screenplay fingerprint.
+'''
+              readme.write_text(text)
+
+          architecture = root / 'Documentation/GuidedFlowArchitecture.md'
+          text = architecture.read_text()
+          marker = '## Final Draft as the only production document'
+          if marker not in text:
+              text += '''
+
+## Final Draft as the only production document
+
+The guided path no longer treats prompted writing as a parallel manuscript. After the author explicitly locks a screenplay structure, the system creates a hidden obligation graph and the existing `FountainTextEditor` becomes the only production surface.
+
+```text
+structure template
+  -> structure obligations
+  -> scene slots
+  -> scene dramatic updates
+  -> professional Fountain text
+  -> structure / continuity / dialogue / format reviews
+  -> author approval
+  -> completed screenplay
+```
+
+Each completion turn flushes the active TextKit scene, preserves the author version, retrieves relevant theory and StoryDNA evidence, compiles only the current scene, writes the result back into the same screenplay, and fills the corresponding `StoryDecision`, `SceneContract`, `SceneMicroBeat`, and `DramaticStateMutation` records. Completion is fingerprinted; subsequent edits automatically return the screenplay to review rather than silently retaining a stale completion badge.
+'''
+              architecture.write_text(text)
+          PY
+
+          # Parse-only validation is platform-neutral and catches Swift syntax
+          # errors without requiring the macOS SwiftUI/SwiftData SDK.
+          for file in \
+            StoryMentor/Models/GuidedScreenplayObligations.swift \
+            StoryMentor/Services/GuidedScreenplayObligationEngine.swift \
+            StoryMentor/AI/GuidedFinalDraftCompilerEngine.swift \
+            StoryMentor/Services/GuidedFinalDraftProjectWriter.swift \
+            StoryMentor/Views/GuidedFlow/GuidedStructureSelectionView.swift \
+            StoryMentor/Views/GuidedFlow/GuidedFinalDraftWorkspaceView.swift \
+            StoryMentor/Views/Screenplay/ScreenplayStudioView.swift \
+            StoryMentor/Views/Workspace/WorkspaceContentView.swift; do
+            swiftc -frontend -parse "$file"
+          done
+
+          if command -v swift-format >/dev/null 2>&1; then
+            swift-format lint --strict \
+              StoryMentor/Models/GuidedScreenplayObligations.swift \
+              StoryMentor/Services/GuidedScreenplayObligationEngine.swift \
+              StoryMentor/AI/GuidedFinalDraftCompilerEngine.swift \
+              StoryMentor/Services/GuidedFinalDraftProjectWriter.swift \
+              StoryMentor/Views/GuidedFlow/GuidedStructureSelectionView.swift \
+              StoryMentor/Views/GuidedFlow/GuidedFinalDraftWorkspaceView.swift
+          fi
+
+          rm .github/workflows/apply-final-draft-obligation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: complete screenplay through Final Draft obligations"
+          git push origin HEAD:feature/final-draft-obligation-flow

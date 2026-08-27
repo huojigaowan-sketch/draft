@@ -4,6 +4,23 @@ Story Mentor is a native macOS writing workspace for diagnosing story ideas and
 turning them into concrete creative assignments. It is designed as an AI mentor,
 not an automatic screenplay generator.
 
+## Guided flow is the default production path
+
+The production entry now uses a novice-first guided-flow workspace. It presents
+one small creative decision at a time, checks the author's attempt, escalates
+help through a fixed scaffold ladder, and deterministically compiles accepted
+steps into structure, scene contracts, micro-beats, and Fountain screenplay
+text.
+
+The AI is prohibited from returning a whole outline, scene, episode, or
+screenplay in this path. Its structured response is limited to a one-step
+review, one nudge, a faithful summary, or—at the final support level—one small
+editable suggestion for the current step. The full NSIR compiler remains
+available as an advanced tool.
+
+See `Documentation/GuidedFlowArchitecture.md` for the state machine, difficulty
+model, scaffold ladder, and output boundaries.
+
 ## Current milestone
 
 Phase 1 establishes the product foundation:
@@ -31,11 +48,13 @@ SwiftUI workspace
         |
 SwiftData story graph
         |
-Story Analysis Engine (Phase 2)
+Guided flow micro-challenge state machine
+        |
+Story Analysis Engine and deterministic contracts
         |
 DeepSeek or SiliconFlow reasoning provider + optional Apple text preprocessing
         |
-Story DNA + theory RAG (later phases)
+Story DNA + theory RAG
 ```
 
 ## Unified project database
@@ -64,11 +83,11 @@ project workspace.
    `https://api.siliconflow.cn/v1`. Saving the API key automatically loads the
    available chat model IDs from `/v1/models?sub_type=chat`; select one from the
    model menu. DeepSeek keeps its original model choices.
-3. Create a project, write freely in any module, and run diagnosis from the
-   mentor panel.
+3. Create a project and enter production. The guided-flow workspace asks one
+   question at a time and saves only author-confirmed decisions.
 4. Import licensed or personally owned PDF writing references in Knowledge.
    PDF text remains local; only retrieved excerpts relevant to a diagnosis are
-   included in the DeepSeek request.
-5. DeepSeek is the primary model for NSIR planning and semantic analysis.
-   Optional Apple processing is limited to local text compaction/polish and is
-   disabled by default; deterministic validation never depends on either model.
+   included in the model request.
+5. DeepSeek is used for one-step semantic review and the final micro-support
+   level. Deterministic validation and project progression do not depend on a
+   model response.

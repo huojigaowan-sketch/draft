@@ -42,6 +42,116 @@ nonisolated enum GuidedFlowAnswerKind: String, Codable, Hashable, Sendable {
   case confirmation
 }
 
+nonisolated enum GuidedFlowResponseMode: String, CaseIterable, Codable, Hashable, Identifiable,
+  Sendable
+{
+  case focused = "聚焦回答"
+  case promptedWriting = "命题写作"
+
+  var id: String { rawValue }
+
+  var systemImage: String {
+    switch self {
+    case .focused: "scope"
+    case .promptedWriting: "doc.text.fill"
+    }
+  }
+}
+
+nonisolated enum GuidedFlowDiscoveryKind: String, CaseIterable, Codable, Hashable, Identifiable,
+  Sendable
+{
+  case character = "活起来的人物"
+  case plot = "已经发生的情节"
+  case relationship = "关系里的压力"
+  case image = "可以拍到的画面"
+  case voice = "作者声音"
+  case world = "世界与生活细节"
+  case theme = "价值与主题"
+
+  var id: String { rawValue }
+
+  var systemImage: String {
+    switch self {
+    case .character: "person.crop.circle.fill"
+    case .plot: "arrow.triangle.branch"
+    case .relationship: "person.2.fill"
+    case .image: "photo.fill"
+    case .voice: "quote.bubble.fill"
+    case .world: "globe.asia.australia.fill"
+    case .theme: "scope"
+    }
+  }
+}
+
+nonisolated struct GuidedFlowDiscovery: Codable, Hashable, Identifiable, Sendable {
+  var id: UUID
+  var kindRawValue: String
+  var finding: String
+  var sourceExcerpt: String
+
+  init(
+    id: UUID = UUID(),
+    kind: GuidedFlowDiscoveryKind,
+    finding: String,
+    sourceExcerpt: String
+  ) {
+    self.id = id
+    kindRawValue = kind.rawValue
+    self.finding = finding
+    self.sourceExcerpt = sourceExcerpt
+  }
+
+  var kind: GuidedFlowDiscoveryKind {
+    get { GuidedFlowDiscoveryKind(rawValue: kindRawValue) ?? .plot }
+    set { kindRawValue = newValue.rawValue }
+  }
+}
+
+nonisolated struct GuidedFlowContributionEcho: Codable, Hashable, Sendable {
+  var headline: String
+  var impactSummary: String
+  var canonicalDecision: String
+  var discoveries: [GuidedFlowDiscovery]
+  var preservedLines: [String]
+  var nextQuestion: String
+}
+
+nonisolated struct GuidedFlowPromptedWritingReview: Hashable, Sendable {
+  var isReady: Bool
+  var feedback: String
+  var singleNudge: String
+  var echo: GuidedFlowContributionEcho?
+}
+
+nonisolated struct GuidedFlowContribution: Codable, Hashable, Identifiable, Sendable {
+  var id: UUID
+  var challengeID: String
+  var prompt: String
+  var rawText: String
+  var echo: GuidedFlowContributionEcho
+  var projectArtifactID: UUID?
+  var createdAt: Date
+
+  init(
+    id: UUID = UUID(),
+    challengeID: String,
+    prompt: String,
+    rawText: String,
+    echo: GuidedFlowContributionEcho,
+    projectArtifactID: UUID? = nil,
+    createdAt: Date = .now
+  ) {
+    self.id = id
+    self.challengeID = challengeID
+    self.prompt = prompt
+    self.rawText = rawText
+    self.echo = echo
+    self.projectArtifactID = projectArtifactID
+    self.createdAt = createdAt
+  }
+}
+
 nonisolated enum GuidedFlowScaffoldLevel: Int, CaseIterable, Codable, Hashable, Comparable, Sendable
 {
   case questionOnly = 0
@@ -127,6 +237,51 @@ nonisolated struct GuidedFlowChallenge: Identifiable, Hashable, Sendable {
   var successContract: [String]
   var difficulty: GuidedFlowDifficultyProfile
 
+  var supportsPromptedWriting: Bool {
+    guard answerKind == .freeText, phase != .screenplay else { return false }
+    return !id.hasSuffix(".heading") && !id.hasSuffix(".pov")
+  }
+
+  var promptedWritingPrompt: String {
+    let lead = "命题：《\(title)》"
+    switch phase {
+    case .foundation:
+      return """
+        \(lead)
+        围绕“\(question)”写一篇短文。不要急着介绍完整设定；写一个你能看见的具体时刻，让人物的动作、犹豫、关系或生活细节自然出现。
+        """
+    case .structure:
+      return """
+        \(lead)
+        写主人公走到这一步前后的一段经历。可以写动作、对话、回忆和观察，但只让当前这个决定、代价或变化发生，不必继续写后面的全部剧情。
+        """
+    case .scene:
+      return """
+        \(lead)
+        把当前问题放进这场戏的一个具体时刻里。你可以像写小说或命题作文一样写人物、动作、对话和环境，不需要使用剧本格式。
+        """
+    case .beat:
+      return """
+        \(lead)
+        只围绕当前这一次情境变化写一个片段。可以写动作、对白、观察和停顿，但不要跳到后续场景或替人物完成全部故事。
+        """
+    case .screenplay, .completed:
+      return lead
+    }
+  }
+
+  var promptedWritingPlaceholder: String {
+    "从一个具体时刻写起。可以先写人物正在做什么、他在躲避什么，或哪一个细节让局面开始不一样……"
+  }
+
+  func minimumCharacters(for mode: GuidedFlowResponseMode) -> Int {
+    mode == .promptedWriting ? max(120, minimumCharacters) : minimumCharacters
+  }
+
+  func maximumCharacters(for mode: GuidedFlowResponseMode) -> Int {
+    mode == .promptedWriting ? 5_000 : maximumCharacters
+  }
+
   func supportText(for level: GuidedFlowScaffoldLevel) -> String {
     switch level {
     case .questionOnly:
@@ -157,6 +312,7 @@ nonisolated struct GuidedFlowAcceptedStep: Codable, Hashable, Identifiable, Send
   var acceptedSummary: String
   var skillRawValue: String
   var scaffoldLevel: Int
+  var responseModeRawValue: String?
   var wasFirstPass: Bool
   var createdAt: Date
 
@@ -169,6 +325,7 @@ nonisolated struct GuidedFlowAcceptedStep: Codable, Hashable, Identifiable, Send
     answer: String,
     acceptedSummary: String,
     scaffoldLevel: GuidedFlowScaffoldLevel,
+    responseMode: GuidedFlowResponseMode = .focused,
     wasFirstPass: Bool,
     createdAt: Date = .now
   ) {
@@ -183,6 +340,7 @@ nonisolated struct GuidedFlowAcceptedStep: Codable, Hashable, Identifiable, Send
     self.acceptedSummary = acceptedSummary
     skillRawValue = challenge.skill.rawValue
     self.scaffoldLevel = scaffoldLevel.rawValue
+    responseModeRawValue = responseMode.rawValue
     self.wasFirstPass = wasFirstPass
     self.createdAt = createdAt
   }
@@ -194,6 +352,10 @@ nonisolated struct GuidedFlowAcceptedStep: Codable, Hashable, Identifiable, Send
   var skill: GuidedFlowSkill {
     GuidedFlowSkill(rawValue: skillRawValue) ?? .ideaDiscovery
   }
+
+  var responseMode: GuidedFlowResponseMode {
+    GuidedFlowResponseMode(rawValue: responseModeRawValue ?? "") ?? .focused
+  }
 }
 
 nonisolated struct GuidedFlowAttempt: Codable, Hashable, Identifiable, Sendable {
@@ -203,6 +365,7 @@ nonisolated struct GuidedFlowAttempt: Codable, Hashable, Identifiable, Sendable 
   var passedLocalChecks: Bool
   var passedCoachReview: Bool?
   var scaffoldLevel: Int
+  var responseModeRawValue: String?
   var feedback: String
   var createdAt: Date
 
@@ -213,6 +376,7 @@ nonisolated struct GuidedFlowAttempt: Codable, Hashable, Identifiable, Sendable 
     passedLocalChecks: Bool,
     passedCoachReview: Bool?,
     scaffoldLevel: GuidedFlowScaffoldLevel,
+    responseMode: GuidedFlowResponseMode = .focused,
     feedback: String,
     createdAt: Date = .now
   ) {
@@ -222,8 +386,13 @@ nonisolated struct GuidedFlowAttempt: Codable, Hashable, Identifiable, Sendable 
     self.passedLocalChecks = passedLocalChecks
     self.passedCoachReview = passedCoachReview
     self.scaffoldLevel = scaffoldLevel.rawValue
+    responseModeRawValue = responseMode.rawValue
     self.feedback = feedback
     self.createdAt = createdAt
+  }
+
+  var responseMode: GuidedFlowResponseMode {
+    GuidedFlowResponseMode(rawValue: responseModeRawValue ?? "") ?? .focused
   }
 }
 
@@ -250,6 +419,9 @@ final class GuidedFlowSession {
   var lastNudge: String
   var awaitingRevision: Bool
   var pendingAcceptedSummary: String
+  var responseModeRawValue: String = GuidedFlowResponseMode.focused.rawValue
+  var pendingContributionData: Data = Data()
+  var contributionsData: Data = Data()
   var acceptedStepsData: Data
   var attemptsData: Data
   var answerMapData: Data
@@ -264,6 +436,7 @@ final class GuidedFlowSession {
     subitemIndex: Int = 0,
     stepIndex: Int = 0,
     scaffoldLevel: GuidedFlowScaffoldLevel = .questionOnly,
+    responseMode: GuidedFlowResponseMode = .focused,
     targetStretch: Int = 0,
     createdAt: Date = .now
   ) {
@@ -281,6 +454,9 @@ final class GuidedFlowSession {
     lastNudge = ""
     awaitingRevision = false
     pendingAcceptedSummary = ""
+    responseModeRawValue = responseMode.rawValue
+    pendingContributionData = Data()
+    contributionsData = Data()
     acceptedStepsData = Data()
     attemptsData = Data()
     answerMapData = Data()
@@ -302,6 +478,55 @@ extension GuidedFlowSession {
     get { GuidedFlowScaffoldLevel(rawValue: scaffoldLevelRawValue) ?? .questionOnly }
     set {
       scaffoldLevelRawValue = newValue.rawValue
+      touch()
+    }
+  }
+
+  var responseMode: GuidedFlowResponseMode {
+    get { GuidedFlowResponseMode(rawValue: responseModeRawValue) ?? .focused }
+    set {
+      responseModeRawValue = newValue.rawValue
+      touch()
+    }
+  }
+
+  var pendingContribution: GuidedFlowContribution? {
+    get {
+      PersistentPayloadCodec.decodeOptional(
+        GuidedFlowContribution.self,
+        from: pendingContributionData,
+        label: "GuidedFlowSession.pendingContribution"
+      )
+    }
+    set {
+      if let newValue {
+        pendingContributionData = PersistentPayloadCodec.encode(
+          newValue,
+          preserving: pendingContributionData,
+          label: "GuidedFlowSession.pendingContribution"
+        )
+      } else {
+        pendingContributionData = Data()
+      }
+      touch()
+    }
+  }
+
+  var contributions: [GuidedFlowContribution] {
+    get {
+      PersistentPayloadCodec.decode(
+        [GuidedFlowContribution].self,
+        from: contributionsData,
+        default: [],
+        label: "GuidedFlowSession.contributions"
+      )
+    }
+    set {
+      contributionsData = PersistentPayloadCodec.encode(
+        newValue,
+        preserving: contributionsData,
+        label: "GuidedFlowSession.contributions"
+      )
       touch()
     }
   }
@@ -387,6 +612,13 @@ extension GuidedFlowSession {
     var values = acceptedSteps
     values.append(step)
     acceptedSteps = Array(values.suffix(500))
+  }
+
+  func recordContribution(_ contribution: GuidedFlowContribution) {
+    var values = contributions
+    values.append(contribution)
+    contributions = Array(values.suffix(120))
+    pendingContribution = contribution
   }
 
   func resetTurnState() {

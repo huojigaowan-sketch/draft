@@ -88,6 +88,73 @@ extension GuidedFlowCoordinator {
     }
   }
 
+  static func recordPromptedWritingContribution(
+    rawText: String,
+    canonicalDecision: String,
+    echo: GuidedFlowContributionEcho,
+    challenge: GuidedFlowChallenge,
+    session: GuidedFlowSession,
+    project: StoryProject,
+    modelContext: ModelContext
+  ) {
+    let stageIndex = contributionStageIndex(
+      session: session,
+      project: project
+    )
+    let kind = contributionModuleKind(for: challenge)
+    let discoverySummary = echo.discoveries
+      .map { "【\($0.kind.rawValue)】\($0.finding)" }
+      .joined(separator: "\n")
+    let artifact = ProjectArtifact(
+      title: "命题写作 · \(String(challenge.title.prefix(30)))",
+      kind: kind,
+      status: .integrated,
+      originLabel: "作者命题写作",
+      humanInput: rawText,
+      lockedIdeas: echo.preservedLines.joined(separator: "\n"),
+      workingText: canonicalDecision,
+      acceptedText: rawText,
+      aiInstruction: challenge.promptedWritingPrompt,
+      aiSummary: [echo.impactSummary, discoverySummary]
+        .filter { !$0.guidedTrimmed.isEmpty }
+        .joined(separator: "\n\n"),
+      sortIndex: project.artifacts.count,
+      project: project
+    )
+    artifact.authorGuidanceText = "全文是作者原始创作，不得被AI摘要覆盖。当前小步只使用提炼决定：\(canonicalDecision)"
+    modelContext.insert(artifact)
+    project.artifacts.append(artifact)
+
+    let stageLabel = stageIndex.map { "第 \($0 + 1) 个结构阶段" } ?? "全项目"
+    let promptContext = """
+      【作者命题写作 · \(challenge.title) · \(stageLabel)】
+      命题：\(challenge.question)
+      原文：
+      \(String(rawText.prefix(3_600)))
+
+      【当前小步提炼】
+      \(canonicalDecision)
+
+      【从原文确认的故事材料】
+      \(discoverySummary)
+      """
+    _ = project.addCreativeIdea(
+      text: promptContext,
+      scope: .project,
+      stageIndex: nil
+    )
+
+    let contribution = GuidedFlowContribution(
+      challengeID: challenge.id,
+      prompt: challenge.promptedWritingPrompt,
+      rawText: rawText,
+      echo: echo,
+      projectArtifactID: artifact.id
+    )
+    session.recordContribution(contribution)
+    project.touch()
+  }
+
   static func applyFoundation(
     _ answer: String,
     stepIndex: Int,
@@ -406,6 +473,39 @@ extension GuidedFlowCoordinator {
       session.stepIndex = 1
     }
     project.touch()
+  }
+
+  private static func contributionStageIndex(
+    session: GuidedFlowSession,
+    project: StoryProject
+  ) -> Int? {
+    switch session.phase {
+    case .structure:
+      return session.itemIndex
+    case .scene, .beat:
+      let scenes = orderedScenes(in: project)
+      guard scenes.indices.contains(session.itemIndex) else { return nil }
+      return scenes[session.itemIndex].structureStageIndex
+    case .foundation, .screenplay, .completed:
+      return nil
+    }
+  }
+
+  private static func contributionModuleKind(
+    for challenge: GuidedFlowChallenge
+  ) -> ProjectModuleKind {
+    switch challenge.skill {
+    case .ideaDiscovery:
+      return .inspiration
+    case .characterCausality:
+      return .character
+    case .oppositionAndStakes, .structuralReasoning, .dramaticStateControl:
+      return challenge.phase == .scene || challenge.phase == .beat ? .scene : .storyPath
+    case .sceneConstruction:
+      return .scene
+    case .dialogueAndAction, .revisionAndContinuity:
+      return .screenplay
+    }
   }
 
 }

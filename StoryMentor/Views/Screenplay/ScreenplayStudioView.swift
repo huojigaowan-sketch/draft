@@ -32,6 +32,7 @@ struct ScreenplayStudioView: View {
     @Environment(AISettingsStore.self) private var aiSettings
     @Bindable var project: StoryProject
     let onNavigate: (WorkspaceSection) -> Void
+    var guidedMode = false
     @Query private var workspaceStates: [ScreenplayWorkspaceState]
 
     @State private var isImporting = false
@@ -238,13 +239,20 @@ struct ScreenplayStudioView: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            aiCreationHeader
+            if !guidedMode {
+                aiCreationHeader
+            }
             editorBody
             statusBar
         }
         .padding(10)
         .background(ScreenplayEditorPalette.workspace)
         .task {
+            if guidedMode {
+                showingNavigator = false
+                showingDramaticLens = false
+                canvasMode = .scene
+            }
             let addedNSIRMappings = SceneMappingEngine.synchronizeNSIRTransitions(
                 in: project,
                 document: project.nsirWorkspace,
@@ -281,10 +289,16 @@ struct ScreenplayStudioView: View {
                 savePendingChanges()
             }
             lastCommittedFullText = project.screenplayText
-            if let incomplete = firstIncompleteSmallBeatContract,
+            if let requestedContractID = project.requestedSceneContractID,
                let record = synchronizedSceneRecords.first(where: {
-                   $0.sceneContractID == incomplete.id
+                   $0.sceneContractID == requestedContractID
                }) {
+                project.requestedSceneContractID = nil
+                loadScene(at: record.order)
+            } else if let incomplete = firstIncompleteSmallBeatContract,
+                      let record = synchronizedSceneRecords.first(where: {
+                          $0.sceneContractID == incomplete.id
+                      }) {
                 loadScene(at: record.order)
             } else if let activeSceneID = state.activeSceneID,
                let record = synchronizedSceneRecords.first(where: {
@@ -336,6 +350,19 @@ struct ScreenplayStudioView: View {
             commitSceneDraft()
             guard let state = ensureWorkspaceState() else { return }
             synchronizeUpstreamScreenplay(in: state, reloadCurrentScene: true)
+        }
+        .onChange(of: project.requestedSceneContractID) { _, requestedID in
+            guard let requestedID else { return }
+            focusRequestedSceneContract(requestedID)
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .guidedFlowCommitScreenplay
+            )
+        ) { notification in
+            guard let projectID = notification.object as? UUID,
+                  projectID == project.id else { return }
+            commitSceneDraft()
         }
         .onDisappear {
             sceneDraftSaveTask?.cancel()
@@ -1374,6 +1401,14 @@ struct ScreenplayStudioView: View {
         (FountainParser.localizedSceneHeading(value) ?? value)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .filter { !$0.isWhitespace }
+    }
+
+    private func focusRequestedSceneContract(_ contractID: UUID) {
+        guard let record = synchronizedSceneRecords.first(where: {
+            $0.sceneContractID == contractID
+        }) else { return }
+        project.requestedSceneContractID = nil
+        selectScene(record.order)
     }
 
     private func selectSceneContract(_ contract: SceneContract) {

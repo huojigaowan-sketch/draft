@@ -111,3 +111,9 @@
 ## 高级工具兼容
 
 默认 `.compiler` 入口切换为 `GuidedFlowWorkspaceView`。原 `NarrativeCompilerWorkbenchView` 保留，并通过“高级结构编译器”入口打开；既有 NSIR、场景工作台、Final Draft 式正文编辑器及格式交互契约不变。
+
+<!-- guided-final-draft:start -->
+## 正式剧本终点
+
+引导式心流现在以现有 Final Draft / Fountain 编辑器作为唯一生产表面。结构模板在后台生成硬性剧作义务；每次命题只补当前真实缺口，作者文字被编译进同一份正式剧本。所有结构、场景、情境更新、连续性和格式义务完成并经作者确认后，系统停止出题。完整设计见 [`GuidedFinalDraftWorkflow.md`](GuidedFinalDraftWorkflow.md)。
+<!-- guided-final-draft:end -->

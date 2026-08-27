@@ -103,3 +103,11 @@ project workspace.
 5. DeepSeek is used for one-step semantic review and the final micro-support
    level. Deterministic validation and project progression do not depend on a
    model response.
+
+<!-- guided-final-draft-readme:start -->
+## Guided Final Draft workflow
+
+The novice-first route now starts with an explicit professional structure and target scale, then keeps the existing Final Draft-style Fountain editor as the only writing surface. Hidden structure, scene, dramatic-state, continuity, and delivery obligations determine the next prompt and the real completion point. Each accepted scene is compiled non-destructively with theory RAG and StoryDNA context, while creative echoes cite the author's own lines. The system stops prompting only when all hard obligations are satisfied and the author approves the complete screenplay.
+
+See [`Documentation/GuidedFinalDraftWorkflow.md`](Documentation/GuidedFinalDraftWorkflow.md).
+<!-- guided-final-draft-readme:end -->

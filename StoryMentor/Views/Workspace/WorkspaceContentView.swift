@@ -22,7 +22,7 @@ struct WorkspaceContentView: View {
     // It exposes one creative decision at a time and compiles accepted
     // micro-steps into the existing project, scene, and Fountain models.
     case .compiler:
-      GuidedFlowWorkspaceView(project: project, onNavigate: onNavigate)
+      GuidedFinalDraftWorkspaceView(project: project, onNavigate: onNavigate)
     // Older records and the explicit advanced entry keep the full NSIR
     // compiler available without making it the novice default.
     case .overview, .ideas, .templates, .journey, .structure:

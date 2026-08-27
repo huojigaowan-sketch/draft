@@ -102,7 +102,7 @@ nonisolated struct GuidedScreenplayPrompt: Hashable, Sendable {
   var actionTitle: String
 }
 
-nonisolated enum GuidedScreenplayEchoKind: String, Codable, Hashable, Sendable {
+nonisolated enum GuidedScreenplayEchoKind: String, CaseIterable, Codable, Hashable, Sendable {
   case character = "人物"
   case plot = "情节"
   case relationship = "关系"

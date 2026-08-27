@@ -23,13 +23,11 @@ enum GuidedFinalDraftProjectWriter {
       fountainText: project.screenplayText
     )
 
-    guard let updatedScreenplay = FountainParser.replacingScene(
+    let updatedScreenplay = FountainParser.replacingScene(
       at: sceneIndex,
       in: project.screenplayText,
       with: result.fountainText
-    ) else {
-      throw GuidedFinalDraftProjectWriterError.sceneReplacementFailed
-    }
+    )
 
     project.screenplayText = FountainParser.standardizingSceneFlow(
       in: updatedScreenplay

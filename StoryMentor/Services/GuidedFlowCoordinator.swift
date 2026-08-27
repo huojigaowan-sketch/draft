@@ -60,32 +60,45 @@ enum GuidedFlowCoordinator {
 
   static func localEvaluation(
     answer: String,
-    challenge: GuidedFlowChallenge
+    challenge: GuidedFlowChallenge,
+    responseMode: GuidedFlowResponseMode = .focused
   ) -> GuidedFlowEvaluation {
     let clean = answer.guidedTrimmed
+    let minimum = challenge.minimumCharacters(for: responseMode)
+    let maximum = challenge.maximumCharacters(for: responseMode)
     guard !clean.isEmpty else {
       return GuidedFlowEvaluation(
         isReady: false,
-        feedback: "先留下一个具体判断。这里没有标准答案，但不能是空白。",
-        singleNudge: challenge.reframe,
+        feedback: responseMode == .promptedWriting
+          ? "先写下一个具体时刻。这里不要求剧本格式，也不要求一次写完整故事。"
+          : "先留下一个具体判断。这里没有标准答案，但不能是空白。",
+        singleNudge: responseMode == .promptedWriting
+          ? challenge.promptedWritingPlaceholder
+          : challenge.reframe,
         acceptedSummary: ""
       )
     }
-    guard clean.count >= challenge.minimumCharacters else {
+    guard clean.count >= minimum else {
       return GuidedFlowEvaluation(
         isReady: false,
-        feedback: "现在的回答还不足以形成一个可继续使用的故事决定。",
-        singleNudge: challenge.sentenceStarter.isEmpty
-          ? challenge.reframe
-          : challenge.sentenceStarter,
+        feedback: responseMode == .promptedWriting
+          ? "这段文字还没有展开到足以看见人物、动作或局面变化。"
+          : "现在的回答还不足以形成一个可继续使用的故事决定。",
+        singleNudge: responseMode == .promptedWriting
+          ? "再写一个具体细节：人物正在做什么、谁在场、哪句话或哪个动作让事情变了？"
+          : (challenge.sentenceStarter.isEmpty ? challenge.reframe : challenge.sentenceStarter),
         acceptedSummary: ""
       )
     }
-    guard clean.count <= challenge.maximumCharacters else {
+    guard clean.count <= maximum else {
       return GuidedFlowEvaluation(
         isReady: false,
-        feedback: "这一步只解决一个问题。请删去解释，只保留最关键的决定。",
-        singleNudge: "把回答压到 \(challenge.maximumCharacters) 字以内。",
+        feedback: responseMode == .promptedWriting
+          ? "全文已经很充足，但当前输入超过了本轮可稳定保存和分析的范围。"
+          : "这一步只解决一个问题。请删去解释，只保留最关键的决定。",
+        singleNudge: responseMode == .promptedWriting
+          ? "保留最有画面、最能让人物行动的部分，把全文收在 \(maximum) 字以内。"
+          : "把回答压到 \(maximum) 字以内。",
         acceptedSummary: ""
       )
     }
@@ -98,11 +111,22 @@ enum GuidedFlowCoordinator {
       )
     }
 
+    let acceptedSummary: String
+    if responseMode == .promptedWriting {
+      acceptedSummary = GuidedFlowContributionAnalyzer.canonicalDecision(
+        from: clean,
+        challenge: challenge
+      )
+    } else {
+      acceptedSummary = String(clean.prefix(120))
+    }
     return GuidedFlowEvaluation(
       isReady: true,
-      feedback: "基本边界已经满足。",
+      feedback: responseMode == .promptedWriting
+        ? "这篇文字已经足够提炼人物、情节和当前决定。"
+        : "基本边界已经满足。",
       singleNudge: "",
-      acceptedSummary: String(clean.prefix(120))
+      acceptedSummary: acceptedSummary
     )
   }
 
@@ -112,6 +136,7 @@ enum GuidedFlowCoordinator {
     feedback: String,
     passedLocalChecks: Bool,
     coachReviewed: Bool?,
+    responseMode: GuidedFlowResponseMode? = nil,
     session: GuidedFlowSession
   ) {
     session.recordAttempt(
@@ -121,6 +146,7 @@ enum GuidedFlowCoordinator {
         passedLocalChecks: passedLocalChecks,
         passedCoachReview: coachReviewed,
         scaffoldLevel: session.scaffoldLevel,
+        responseMode: responseMode ?? session.responseMode,
         feedback: feedback
       )
     )
@@ -141,6 +167,8 @@ enum GuidedFlowCoordinator {
     acceptedSummary: String,
     challenge: GuidedFlowChallenge,
     coachReviewed: Bool?,
+    responseMode: GuidedFlowResponseMode = .focused,
+    contributionEcho: GuidedFlowContributionEcho? = nil,
     session: GuidedFlowSession,
     project: StoryProject,
     modelContext: ModelContext
@@ -148,6 +176,30 @@ enum GuidedFlowCoordinator {
     let clean = answer.guidedTrimmed
     let earlierAttempts = session.attempts.filter { $0.challengeID == challenge.id }.count
     let wasFirstPass = earlierAttempts == 0 && session.scaffoldLevel == .questionOnly
+    let fallbackCanonical = GuidedFlowContributionAnalyzer.canonicalDecision(
+      from: clean,
+      challenge: challenge
+    )
+    let echoCanonical = contributionEcho?.canonicalDecision.guidedTrimmed ?? ""
+    let canonicalSummary =
+      responseMode == .promptedWriting
+      ? (!echoCanonical.isEmpty
+        ? echoCanonical
+        : (acceptedSummary.guidedTrimmed.isEmpty
+          ? fallbackCanonical : acceptedSummary.guidedTrimmed))
+      : (acceptedSummary.guidedTrimmed.isEmpty
+        ? String(clean.prefix(140)) : acceptedSummary.guidedTrimmed)
+    let appliedAnswer: String
+    if responseMode == .promptedWriting,
+      challenge.phase == .beat,
+      challenge.id.hasSuffix(".text")
+    {
+      appliedAnswer = clean
+    } else if responseMode == .promptedWriting {
+      appliedAnswer = canonicalSummary
+    } else {
+      appliedAnswer = clean
+    }
 
     session.recordAttempt(
       GuidedFlowAttempt(
@@ -156,6 +208,7 @@ enum GuidedFlowCoordinator {
         passedLocalChecks: true,
         passedCoachReview: coachReviewed,
         scaffoldLevel: session.scaffoldLevel,
+        responseMode: responseMode,
         feedback: "已确认"
       )
     )
@@ -166,17 +219,36 @@ enum GuidedFlowCoordinator {
         subitemIndex: session.subitemIndex,
         stepIndex: session.stepIndex,
         answer: clean,
-        acceptedSummary: acceptedSummary.guidedTrimmed.isEmpty
-          ? String(clean.prefix(140))
-          : String(acceptedSummary.guidedTrimmed.prefix(140)),
+        acceptedSummary: String(canonicalSummary.prefix(220)),
         scaffoldLevel: session.scaffoldLevel,
+        responseMode: responseMode,
         wasFirstPass: wasFirstPass
       )
     )
-    session.setAnswer(clean, for: challenge.id)
+    session.setAnswer(appliedAnswer, for: challenge.id)
+
+    if responseMode == .promptedWriting {
+      let echo =
+        contributionEcho
+        ?? GuidedFlowContributionAnalyzer.localReview(
+          answer: clean,
+          challenge: challenge
+        ).echo
+      if let echo {
+        recordPromptedWritingContribution(
+          rawText: clean,
+          canonicalDecision: canonicalSummary,
+          echo: echo,
+          challenge: challenge,
+          session: session,
+          project: project,
+          modelContext: modelContext
+        )
+      }
+    }
 
     try apply(
-      clean,
+      appliedAnswer,
       challenge: challenge,
       session: session,
       project: project,

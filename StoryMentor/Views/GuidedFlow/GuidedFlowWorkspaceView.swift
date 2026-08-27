@@ -33,7 +33,12 @@ struct GuidedFlowWorkspaceView: View {
       StudioCanvas()
 
       if let session = activeSession {
-        if session.phase == .completed {
+        if let contribution = session.pendingContribution {
+          contributionImpactWorkspace(
+            session: session,
+            contribution: contribution
+          )
+        } else if session.phase == .completed {
           completionView(session)
         } else if let challenge {
           challengeWorkspace(session: session, challenge: challenge)
@@ -266,18 +271,74 @@ struct GuidedFlowWorkspaceView: View {
     session: GuidedFlowSession,
     challenge: GuidedFlowChallenge
   ) -> some View {
-    StudioCard(padding: 20) {
+    let responseMode: GuidedFlowResponseMode =
+      challenge.supportsPromptedWriting
+      ? session.responseMode
+      : .focused
+    let maximumCharacters = challenge.maximumCharacters(for: responseMode)
+    let isPromptedWriting = responseMode == .promptedWriting
+
+    return StudioCard(padding: 20) {
       VStack(alignment: .leading, spacing: 14) {
-        HStack {
-          EyebrowLabel(text: "你的当前决定", color: StudioTheme.mint)
+        HStack(alignment: .center) {
+          VStack(alignment: .leading, spacing: 3) {
+            EyebrowLabel(
+              text: isPromptedWriting ? "你的命题写作" : "你的当前决定",
+              color: StudioTheme.mint
+            )
+            if isPromptedWriting {
+              Text("可以像写命题作文一样展开；不需要先懂剧本格式。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          }
           Spacer()
-          Text("\(session.currentDraft.count)/\(challenge.maximumCharacters)")
+          Text("\(session.currentDraft.count)/\(maximumCharacters)")
             .font(.caption.monospacedDigit())
             .foregroundStyle(
-              session.currentDraft.count > challenge.maximumCharacters
+              session.currentDraft.count > maximumCharacters
                 ? Color.red
                 : Color.secondary
             )
+        }
+
+        if challenge.supportsPromptedWriting {
+          HStack(spacing: 12) {
+            Picker("回答方式", selection: responseModeBinding(session)) {
+              ForEach(GuidedFlowResponseMode.allCases) { mode in
+                Label(mode.rawValue, systemImage: mode.systemImage)
+                  .tag(mode)
+              }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 360)
+
+            if isPromptedWriting {
+              Label("建议 300—1200 字", systemImage: "pencil.line")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(StudioTheme.warm)
+            }
+            Spacer()
+          }
+        }
+
+        if isPromptedWriting {
+          VStack(alignment: .leading, spacing: 8) {
+            Label("本轮命题", systemImage: "doc.text.fill")
+              .font(.caption.weight(.bold))
+              .foregroundStyle(StudioTheme.warm)
+            Text(challenge.promptedWritingPrompt)
+              .font(.system(size: 17, weight: .medium, design: .serif))
+              .lineSpacing(5)
+              .fixedSize(horizontal: false, vertical: true)
+            Text("可以写动作、对话、回忆、观察和生活细节。系统会保留全文，并从原文中提炼人物、情节、关系与画面。")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .padding(15)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(StudioTheme.warm.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
         }
 
         if !challenge.options.isEmpty {
@@ -299,19 +360,35 @@ struct GuidedFlowWorkspaceView: View {
         }
 
         TextEditor(text: draftBinding(session))
-          .font(.system(size: 16, design: challenge.phase == .beat ? .monospaced : .default))
+          .font(
+            .system(
+              size: isPromptedWriting ? 17 : 16,
+              design: isPromptedWriting
+                ? .serif
+                : (challenge.phase == .beat ? .monospaced : .default)
+            )
+          )
+          .lineSpacing(isPromptedWriting ? 6 : 2)
           .scrollContentBackground(.hidden)
-          .frame(minHeight: challenge.phase == .beat ? 150 : 105)
+          .frame(
+            minHeight: isPromptedWriting
+              ? 340
+              : (challenge.phase == .beat ? 150 : 105)
+          )
           .padding(11)
           .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
           .overlay(alignment: .topLeading) {
             if session.currentDraft.isEmpty {
-              Text(challenge.placeholder)
-                .font(.system(size: 15))
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 18)
-                .allowsHitTesting(false)
+              Text(
+                isPromptedWriting
+                  ? challenge.promptedWritingPlaceholder
+                  : challenge.placeholder
+              )
+              .font(.system(size: 15))
+              .foregroundStyle(.tertiary)
+              .padding(.horizontal, 16)
+              .padding(.vertical, 18)
+              .allowsHitTesting(false)
             }
           }
           .focused($answerIsFocused)
@@ -323,10 +400,13 @@ struct GuidedFlowWorkspaceView: View {
             if isRequestingAssist {
               HStack(spacing: 7) {
                 ProgressView().controlSize(.small)
-                Text("只准备当前一步的提示…")
+                Text(isPromptedWriting ? "正在准备一个写作切口…" : "只准备当前一步的提示…")
               }
             } else {
-              Label(supportButtonTitle(session), systemImage: "lifepreserver.fill")
+              Label(
+                supportButtonTitle(session, responseMode: responseMode),
+                systemImage: "lifepreserver.fill"
+              )
             }
           }
           .buttonStyle(.bordered)
@@ -337,7 +417,7 @@ struct GuidedFlowWorkspaceView: View {
           if isReviewing {
             HStack(spacing: 8) {
               ProgressView().controlSize(.small)
-              Text("只检查当前一步…")
+              Text(isPromptedWriting ? "正在从你的原文中寻找故事材料…" : "只检查当前一步…")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
@@ -346,7 +426,10 @@ struct GuidedFlowWorkspaceView: View {
           Button {
             submit(session: session, challenge: challenge)
           } label: {
-            Label("确认这一小步", systemImage: "arrow.right.circle.fill")
+            Label(
+              isPromptedWriting ? "提交这篇命题写作" : "确认这一小步",
+              systemImage: isPromptedWriting ? "doc.badge.arrow.up.fill" : "arrow.right.circle.fill"
+            )
           }
           .buttonStyle(.borderedProminent)
           .controlSize(.large)
@@ -359,9 +442,13 @@ struct GuidedFlowWorkspaceView: View {
           .keyboardShortcut(.return, modifiers: [.command])
         }
 
-        Text("确认后只写入这一项故事决定；系统不会顺手生成后续大纲或完整场景。")
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
+        Text(
+          isPromptedWriting
+            ? "全文会作为作者原稿原样保存。AI只指出你的文字已经创造了什么，并提炼当前小步；不会用摘要替换原文。"
+            : "确认后只写入这一项故事决定；系统不会顺手生成后续大纲或完整场景。"
+        )
+        .font(.caption2)
+        .foregroundStyle(.tertiary)
       }
     }
   }
@@ -413,9 +500,11 @@ struct GuidedFlowWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 2) {
                   Text(step.acceptedSummary)
                     .font(.callout)
-                  Text("\(step.phase.rawValue) · \(step.skill.rawValue)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                  Text(
+                    "\(step.phase.rawValue) · \(step.skill.rawValue) · \(step.responseMode.rawValue)"
+                  )
+                  .font(.caption2)
+                  .foregroundStyle(.secondary)
                 }
               }
             }
@@ -428,6 +517,212 @@ struct GuidedFlowWorkspaceView: View {
         .padding(16)
         .animatedStoryBubble(tint: StudioTheme.mint, cornerRadius: 30)
       }
+    }
+  }
+
+  private func contributionImpactWorkspace(
+    session: GuidedFlowSession,
+    contribution: GuidedFlowContribution
+  ) -> some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 14) {
+          HStack(alignment: .top, spacing: 16) {
+            Image(systemName: "text.badge.checkmark")
+              .font(.system(size: 28, weight: .semibold))
+              .foregroundStyle(.white)
+              .frame(width: 58, height: 58)
+              .background(
+                LinearGradient(
+                  colors: [StudioTheme.mint, StudioTheme.accent],
+                  startPoint: .topLeading,
+                  endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 18)
+              )
+
+            VStack(alignment: .leading, spacing: 7) {
+              EyebrowLabel(text: "即时创作回声", color: StudioTheme.mint)
+              Text("你的文字已经进入故事")
+                .font(.system(size: 34, weight: .semibold, design: .serif))
+              Text(contribution.echo.headline)
+                .font(.system(size: 20, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+          }
+
+          Text(contribution.echo.impactSummary)
+            .font(.system(size: 16))
+            .lineSpacing(5)
+            .fixedSize(horizontal: false, vertical: true)
+
+          HStack(spacing: 9) {
+            contributionMetric(
+              "\(contribution.rawText.count) 字原文",
+              icon: "doc.text.fill",
+              tint: StudioTheme.mint
+            )
+            contributionMetric(
+              "\(contribution.echo.discoveries.count) 个故事抓手",
+              icon: "sparkles",
+              tint: StudioTheme.warm
+            )
+            contributionMetric(
+              "已保存为作者原稿",
+              icon: "lock.doc.fill",
+              tint: StudioTheme.sky
+            )
+          }
+        }
+        .padding(24)
+        .animatedStoryBubble(tint: StudioTheme.mint, cornerRadius: 46, isSelected: true)
+
+        VStack(alignment: .leading, spacing: 12) {
+          EyebrowLabel(text: "这篇文字已经创造了什么", color: StudioTheme.warm)
+          Text("这里不评价作文好坏，只显示原文已经为人物、情节和场面提供了哪些可用材料。")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+
+          LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 280), spacing: 12)],
+            spacing: 12
+          ) {
+            ForEach(contribution.echo.discoveries) { discovery in
+              contributionDiscoveryCard(discovery)
+            }
+          }
+        }
+        .padding(20)
+        .animatedStoryBubble(tint: StudioTheme.warm, cornerRadius: 40)
+
+        VStack(alignment: .leading, spacing: 10) {
+          EyebrowLabel(text: "当前小步被提炼为", color: StudioTheme.accent)
+          Text(contribution.echo.canonicalDecision)
+            .font(.system(size: 20, weight: .semibold, design: .serif))
+            .lineSpacing(5)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+          Label(
+            "这是对当前命题的工作提炼。你的全文仍然原样保存，并会继续进入后续AI上下文。",
+            systemImage: "arrow.triangle.branch"
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .animatedStoryBubble(tint: StudioTheme.accent, cornerRadius: 38)
+
+        if !contribution.echo.preservedLines.isEmpty {
+          VStack(alignment: .leading, spacing: 11) {
+            EyebrowLabel(text: "值得原样保留的句子", color: StudioTheme.sky)
+            ForEach(contribution.echo.preservedLines, id: \.self) { line in
+              Text("“\(line)”")
+                .font(.system(size: 16, design: .serif))
+                .italic()
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+            }
+          }
+          .padding(20)
+          .animatedStoryBubble(tint: StudioTheme.sky, cornerRadius: 38)
+        }
+
+        DisclosureGroup {
+          Text(contribution.rawText)
+            .font(.system(size: 16, design: .serif))
+            .lineSpacing(6)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 12)
+        } label: {
+          Label("查看我提交的完整原文", systemImage: "doc.richtext.fill")
+            .font(.callout.weight(.semibold))
+        }
+        .padding(18)
+        .animatedStoryBubble(tint: StudioTheme.sky, cornerRadius: 34)
+
+        HStack(alignment: .center, spacing: 14) {
+          VStack(alignment: .leading, spacing: 4) {
+            EyebrowLabel(text: "下一步会从这里继续", color: StudioTheme.mint)
+            Text(contribution.echo.nextQuestion)
+              .font(.system(size: 17, weight: .medium))
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          Spacer(minLength: 18)
+          Button("带着这些发现继续", systemImage: "arrow.right.circle.fill") {
+            session.pendingContribution = nil
+            saveSilently()
+            Task { @MainActor in
+              try? await Task.sleep(for: .milliseconds(160))
+              answerIsFocused = true
+            }
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.large)
+          .tint(StudioTheme.mint)
+        }
+        .padding(20)
+        .animatedStoryBubble(tint: StudioTheme.mint, cornerRadius: 38)
+      }
+      .padding(.horizontal, 28)
+      .padding(.vertical, 26)
+      .frame(maxWidth: 980)
+      .frame(maxWidth: .infinity)
+    }
+  }
+
+  private func contributionMetric(
+    _ text: String,
+    icon: String,
+    tint: Color
+  ) -> some View {
+    Label(text, systemImage: icon)
+      .font(.caption.weight(.semibold))
+      .foregroundStyle(tint)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 7)
+      .background(tint.opacity(0.08), in: Capsule())
+  }
+
+  private func contributionDiscoveryCard(
+    _ discovery: GuidedFlowDiscovery
+  ) -> some View {
+    let tint = discoveryTint(discovery.kind)
+    return VStack(alignment: .leading, spacing: 9) {
+      Label(discovery.kind.rawValue, systemImage: discovery.kind.systemImage)
+        .font(.caption.weight(.bold))
+        .foregroundStyle(tint)
+      Text(discovery.finding)
+        .font(.callout)
+        .fixedSize(horizontal: false, vertical: true)
+      if !discovery.sourceExcerpt.isEmpty {
+        Text("原文：“\(discovery.sourceExcerpt)”")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, minHeight: 126, alignment: .topLeading)
+    .background(tint.opacity(0.055), in: RoundedRectangle(cornerRadius: 14))
+    .overlay {
+      RoundedRectangle(cornerRadius: 14)
+        .stroke(tint.opacity(0.15))
+    }
+  }
+
+  private func discoveryTint(_ kind: GuidedFlowDiscoveryKind) -> Color {
+    switch kind {
+    case .character: StudioTheme.mint
+    case .plot: StudioTheme.warm
+    case .relationship: StudioTheme.accent
+    case .image: StudioTheme.sky
+    case .voice: .purple
+    case .world: .cyan
+    case .theme: .indigo
     }
   }
 
@@ -495,9 +790,11 @@ struct GuidedFlowWorkspaceView: View {
     )
     activeSession = session
     saveSilently()
-    Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(180))
-      answerIsFocused = true
+    if session.pendingContribution == nil {
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(180))
+        answerIsFocused = true
+      }
     }
   }
 
@@ -506,9 +803,14 @@ struct GuidedFlowWorkspaceView: View {
     challenge: GuidedFlowChallenge
   ) {
     let answer = session.currentDraft
+    let responseMode: GuidedFlowResponseMode =
+      challenge.supportsPromptedWriting
+      ? session.responseMode
+      : .focused
     let local = GuidedFlowCoordinator.localEvaluation(
       answer: answer,
-      challenge: challenge
+      challenge: challenge,
+      responseMode: responseMode
     )
     guard local.isReady else {
       GuidedFlowCoordinator.recordFailedAttempt(
@@ -517,10 +819,21 @@ struct GuidedFlowWorkspaceView: View {
         feedback: local.feedback,
         passedLocalChecks: false,
         coachReviewed: nil,
+        responseMode: responseMode,
         session: session
       )
       session.lastNudge = local.singleNudge
       saveSilently()
+      return
+    }
+
+    if responseMode == .promptedWriting {
+      submitPromptedWriting(
+        answer: answer,
+        local: local,
+        session: session,
+        challenge: challenge
+      )
       return
     }
 
@@ -541,6 +854,7 @@ struct GuidedFlowWorkspaceView: View {
               acceptedSummary: review.acceptedSummary,
               challenge: challenge,
               coachReviewed: true,
+              responseMode: .focused,
               session: session,
               project: project,
               modelContext: modelContext
@@ -553,6 +867,7 @@ struct GuidedFlowWorkspaceView: View {
               feedback: review.feedback,
               passedLocalChecks: true,
               coachReviewed: false,
+              responseMode: .focused,
               session: session
             )
             session.lastNudge = review.singleNudge
@@ -569,6 +884,7 @@ struct GuidedFlowWorkspaceView: View {
           acceptedSummary: local.acceptedSummary,
           challenge: challenge,
           coachReviewed: nil,
+          responseMode: .focused,
           session: session,
           project: project,
           modelContext: modelContext
@@ -580,10 +896,97 @@ struct GuidedFlowWorkspaceView: View {
     }
   }
 
+  private func submitPromptedWriting(
+    answer: String,
+    local: GuidedFlowEvaluation,
+    session: GuidedFlowSession,
+    challenge: GuidedFlowChallenge
+  ) {
+    if settings.hasAPIKey {
+      Task {
+        isReviewing = true
+        defer { isReviewing = false }
+        do {
+          let review = try await GuidedFlowCoachEngine.reflectOnPromptedWriting(
+            answer: answer,
+            challenge: challenge,
+            project: project,
+            configuration: try settings.configuration()
+          )
+          guard review.isReady, let echo = review.echo else {
+            GuidedFlowCoordinator.recordFailedAttempt(
+              answer: answer,
+              challenge: challenge,
+              feedback: review.feedback,
+              passedLocalChecks: true,
+              coachReviewed: false,
+              responseMode: .promptedWriting,
+              session: session
+            )
+            session.lastNudge = review.singleNudge
+            saveSilently()
+            return
+          }
+          try GuidedFlowCoordinator.accept(
+            answer: answer,
+            acceptedSummary: echo.canonicalDecision,
+            challenge: challenge,
+            coachReviewed: true,
+            responseMode: .promptedWriting,
+            contributionEcho: echo,
+            session: session,
+            project: project,
+            modelContext: modelContext
+          )
+        } catch {
+          present(error)
+        }
+      }
+    } else {
+      let review = GuidedFlowContributionAnalyzer.localReview(
+        answer: answer,
+        challenge: challenge
+      )
+      guard review.isReady, let echo = review.echo else {
+        GuidedFlowCoordinator.recordFailedAttempt(
+          answer: answer,
+          challenge: challenge,
+          feedback: review.feedback,
+          passedLocalChecks: true,
+          coachReviewed: nil,
+          responseMode: .promptedWriting,
+          session: session
+        )
+        session.lastNudge = review.singleNudge
+        saveSilently()
+        return
+      }
+      do {
+        try GuidedFlowCoordinator.accept(
+          answer: answer,
+          acceptedSummary: local.acceptedSummary,
+          challenge: challenge,
+          coachReviewed: nil,
+          responseMode: .promptedWriting,
+          contributionEcho: echo,
+          session: session,
+          project: project,
+          modelContext: modelContext
+        )
+      } catch {
+        present(error)
+      }
+    }
+  }
+
   private func requestSupport(
     session: GuidedFlowSession,
     challenge: GuidedFlowChallenge
   ) {
+    let responseMode: GuidedFlowResponseMode =
+      challenge.supportsPromptedWriting
+      ? session.responseMode
+      : .focused
     GuidedFlowCoordinator.requestNextSupport(
       for: session,
       challenge: challenge
@@ -595,10 +998,15 @@ struct GuidedFlowWorkspaceView: View {
     }
 
     guard settings.hasAPIKey else {
-      session.lastNudge =
-        challenge.sentenceStarter.isEmpty
-        ? (challenge.mechanismHints.first ?? challenge.reframe)
-        : challenge.sentenceStarter
+      if responseMode == .promptedWriting {
+        session.lastNudge =
+          "可以从这个切口开始：\(challenge.sentenceStarter.isEmpty ? challenge.reframe : challenge.sentenceStarter) 然后写一个具体动作或细节，让人物不得不回应。"
+      } else {
+        session.lastNudge =
+          challenge.sentenceStarter.isEmpty
+          ? (challenge.mechanismHints.first ?? challenge.reframe)
+          : challenge.sentenceStarter
+      }
       saveSilently()
       return
     }
@@ -611,7 +1019,8 @@ struct GuidedFlowWorkspaceView: View {
           challenge: challenge,
           currentDraft: session.currentDraft,
           project: project,
-          configuration: try settings.configuration()
+          configuration: try settings.configuration(),
+          responseMode: responseMode
         )
         session.touch()
         saveSilently()
@@ -637,6 +1046,23 @@ struct GuidedFlowWorkspaceView: View {
     answerIsFocused = true
   }
 
+  private func responseModeBinding(
+    _ session: GuidedFlowSession
+  ) -> Binding<GuidedFlowResponseMode> {
+    Binding(
+      get: { session.responseMode },
+      set: { mode in
+        session.responseMode = mode
+        session.lastFeedback = ""
+        session.lastNudge = ""
+        session.awaitingRevision = false
+        session.scaffoldLevel = .questionOnly
+        session.touch()
+        answerIsFocused = true
+      }
+    )
+  }
+
   private func draftBinding(_ session: GuidedFlowSession) -> Binding<String> {
     Binding(
       get: { session.currentDraft },
@@ -648,15 +1074,23 @@ struct GuidedFlowWorkspaceView: View {
     )
   }
 
-  private func supportButtonTitle(_ session: GuidedFlowSession) -> String {
+  private func supportButtonTitle(
+    _ session: GuidedFlowSession,
+    responseMode: GuidedFlowResponseMode
+  ) -> String {
     if session.scaffoldLevel == .minimalAssist {
-      return "再给当前一步一个最小建议"
+      return responseMode == .promptedWriting
+        ? "再给我一个写作切口"
+        : "再给当前一步一个最小建议"
     }
     let nextRaw = min(
       GuidedFlowScaffoldLevel.minimalAssist.rawValue,
       session.scaffoldLevel.rawValue + 1
     )
     let next = GuidedFlowScaffoldLevel(rawValue: nextRaw) ?? .minimalAssist
+    if responseMode == .promptedWriting {
+      return "我需要一个写作切口 · \(next.label)"
+    }
     return "我需要一点帮助 · \(next.label)"
   }
 

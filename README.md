@@ -18,6 +18,16 @@ review, one nudge, a faithful summary, or—at the final support level—one sma
 editable suggestion for the current step. The full NSIR compiler remains
 available as an advanced tool.
 
+Authors are not restricted to tiny answers. Suitable challenges also provide a
+prompted-writing mode for roughly 300–1200 Chinese-character, composition-style responses without
+screenplay formatting. The complete author text is preserved as a project
+artifact and injected into later creative context. Immediate “creative echo”
+feedback identifies, with verbatim evidence from the author’s own text, which
+characters, plot movements, relationship pressures, visual moments, voice, and
+world details have already become usable screenplay material. AI extracts only
+the single current decision needed by the state machine; it never replaces the
+original prose.
+
 See `Documentation/GuidedFlowArchitecture.md` for the state machine, difficulty
 model, scaffold ladder, and output boundaries.
 
@@ -84,7 +94,9 @@ project workspace.
    available chat model IDs from `/v1/models?sub_type=chat`; select one from the
    model menu. DeepSeek keeps its original model choices.
 3. Create a project and enter production. The guided-flow workspace asks one
-   question at a time and saves only author-confirmed decisions.
+   question at a time. Choose either a focused answer or prompted writing; both
+   paths save only author-confirmed decisions, while prompted writing also
+   preserves the full original prose and shows its immediate story impact.
 4. Import licensed or personally owned PDF writing references in Knowledge.
    PDF text remains local; only retrieved excerpts relevant to a diagnosis are
    included in the model request.
